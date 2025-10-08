@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
+	"sync/atomic"
 )
 
 const (
@@ -10,16 +12,17 @@ const (
 	PORT         = "8080"
 )
 
-func endpoint_healthz(respWr http.ResponseWriter, req *http.Request) {
-	respWr.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	respWr.WriteHeader(200)
-	respWr.Write([]byte("OK"))
+type apiConfig struct {
+	fileserverHits atomic.Int32
 }
 
 func main() {
+	apiCfg := apiConfig{}
 	servemux := http.ServeMux{}
-	servemux.Handle("/app/", http.StripPrefix("/app", http.FileServer(http.Dir(FILEPATHROOT))))
-	servemux.HandleFunc("/healthz", endpoint_healthz)
+	servemux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(FILEPATHROOT)))))
+	servemux.HandleFunc("GET /api/healthz", endpoint_healthz)
+	servemux.HandleFunc("GET /api/metrics", apiCfg.endpoint_metrics)
+	servemux.HandleFunc("POST /api/reset", apiCfg.endpoint_reset)
 
 	server := &http.Server{
 		Addr:    ":" + PORT,
@@ -27,4 +30,28 @@ func main() {
 	}
 	log.Printf("Serving files from %s on port: %s\n", FILEPATHROOT, PORT)
 	log.Fatal(server.ListenAndServe())
+}
+
+func endpoint_healthz(respWr http.ResponseWriter, req *http.Request) {
+	respWr.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	respWr.WriteHeader(200)
+	respWr.Write([]byte("OK"))
+}
+
+func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cfg.fileserverHits.Add(1)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (cfg *apiConfig) endpoint_metrics(resp http.ResponseWriter, req *http.Request) {
+	resp.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	resp.WriteHeader(200)
+	resp.Write(fmt.Appendf(nil, "Hits: %v", cfg.fileserverHits.Load()))
+}
+
+func (cfg *apiConfig) endpoint_reset(resp http.ResponseWriter, req *http.Request) {
+	resp.WriteHeader(200)
+	cfg.fileserverHits.Store(0)
 }
