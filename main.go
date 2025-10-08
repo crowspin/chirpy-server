@@ -21,8 +21,8 @@ func main() {
 	servemux := http.ServeMux{}
 	servemux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(FILEPATHROOT)))))
 	servemux.HandleFunc("GET /api/healthz", endpoint_healthz)
-	servemux.HandleFunc("GET /api/metrics", apiCfg.endpoint_metrics)
-	servemux.HandleFunc("POST /api/reset", apiCfg.endpoint_reset)
+	servemux.HandleFunc("GET /admin/metrics", apiCfg.endpoint_metrics)
+	servemux.HandleFunc("POST /admin/reset", apiCfg.endpoint_reset)
 
 	server := &http.Server{
 		Addr:    ":" + PORT,
@@ -46,9 +46,16 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func (cfg *apiConfig) endpoint_metrics(resp http.ResponseWriter, req *http.Request) {
-	resp.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	resp.Header().Set("Content-Type", "text/html")
 	resp.WriteHeader(200)
-	resp.Write(fmt.Appendf(nil, "Hits: %v", cfg.fileserverHits.Load()))
+	resp.Write(fmt.Appendf(nil, `
+		<html>
+			<body>
+				<h1>Welcome, Chirpy Admin</h1>
+				<p>Chirpy has been visited %d times!</p>
+			</body>
+		</html>
+`, cfg.fileserverHits.Load()))
 }
 
 func (cfg *apiConfig) endpoint_reset(resp http.ResponseWriter, req *http.Request) {
