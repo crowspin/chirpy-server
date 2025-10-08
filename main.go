@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
+	"strings"
 	"sync/atomic"
 )
 
@@ -65,13 +67,18 @@ func (cfg *apiConfig) endpoint_reset(resp http.ResponseWriter, req *http.Request
 	cfg.fileserverHits.Store(0)
 }
 
+type incomingChirp struct {
+	Body string `json:"body"`
+}
+type outgoingChirp struct {
+	Body string `json:"cleaned_body"`
+}
+
 func endpoint_validate_chirp(resp http.ResponseWriter, req *http.Request) {
 	resp.Header().Set("Content-Type", "application/json")
 
 	decoder := json.NewDecoder(req.Body)
-	msg := struct {
-		Body string `json:"body"`
-	}{}
+	msg := incomingChirp{}
 	if err := decoder.Decode(&msg); err != nil {
 		log.Printf("Error decoding parameters: %s", err)
 		respondWithError(resp, 500, "Something went wrong")
@@ -83,9 +90,11 @@ func endpoint_validate_chirp(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	respondWithJSON(resp, 200, struct {
+	/*respondWithJSON(resp, 200, struct {
 		Valid bool `json:"valid"`
-	}{Valid: true})
+	}{Valid: true})*/
+
+	respondWithJSON(resp, 200, cleanChirpProfanity(msg))
 }
 
 func respondWithError(rw http.ResponseWriter, code int, msg string) {
@@ -112,4 +121,17 @@ func respondWithJSON(rw http.ResponseWriter, code int, payload any) {
 
 	rw.WriteHeader(code)
 	rw.Write(dat)
+}
+
+func cleanChirpProfanity(in incomingChirp) outgoingChirp {
+	profanity := []string{"kerfuffle", "sharbert", "fornax"}
+	clean := []string{}
+	for v := range strings.SplitSeq(in.Body, " ") {
+		if slices.Contains(profanity, strings.ToLower(v)) {
+			clean = append(clean, "****")
+		} else {
+			clean = append(clean, v)
+		}
+	}
+	return outgoingChirp{Body: strings.Join(clean, " ")}
 }
