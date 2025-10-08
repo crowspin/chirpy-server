@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -33,6 +35,12 @@ func main() {
 		Handler: &servemux,
 	}
 	log.Printf("Serving files from %s on port: %s\n", FILEPATHROOT, PORT)
+	go func() {
+		time.Sleep(5 * time.Second)
+		ctx, rel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer rel()
+		server.Shutdown(ctx)
+	}()
 	log.Fatal(server.ListenAndServe())
 }
 
@@ -70,6 +78,7 @@ func (cfg *apiConfig) endpoint_reset(resp http.ResponseWriter, req *http.Request
 type incomingChirp struct {
 	Body string `json:"body"`
 }
+
 type outgoingChirp struct {
 	Body string `json:"cleaned_body"`
 }
