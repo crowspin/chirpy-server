@@ -68,55 +68,48 @@ func (cfg *apiConfig) endpoint_reset(resp http.ResponseWriter, req *http.Request
 func endpoint_validate_chirp(resp http.ResponseWriter, req *http.Request) {
 	resp.Header().Set("Content-Type", "application/json")
 
-	type chirp struct {
-		Body string `json:"body"`
-	}
 	decoder := json.NewDecoder(req.Body)
-	msg := chirp{}
+	msg := struct {
+		Body string `json:"body"`
+	}{}
 	if err := decoder.Decode(&msg); err != nil {
 		log.Printf("Error decoding parameters: %s", err)
-		if dat := produce_error_json("Something went wrong"); dat != nil {
-			resp.Write(dat)
-		}
-		resp.WriteHeader(500)
+		respondWithError(resp, 500, "Something went wrong")
 		return
 	}
 
 	if len(msg.Body) > 140 {
-		resp.WriteHeader(400)
-		if dat := produce_error_json("Chirp is too long"); dat != nil {
-			resp.Write(dat)
-		}
+		respondWithError(resp, 400, "Chirp is too long")
 		return
 	}
 
-	type success struct {
+	respondWithJSON(resp, 200, struct {
 		Valid bool `json:"valid"`
-	}
-	rv := success{Valid: true}
-	dat, err := json.Marshal(rv)
-	if err != nil {
-		log.Printf("Error encoding response: %s", err)
-		if dat := produce_error_json("Something went wrong"); dat != nil {
-			resp.Write(dat)
-		}
-		resp.WriteHeader(500)
-		return
-	}
-
-	resp.WriteHeader(200)
-	resp.Write(dat)
+	}{Valid: true})
 }
 
-func produce_error_json(val string) []byte {
+func respondWithError(rw http.ResponseWriter, code int, msg string) {
 	type errorMessage struct {
 		M string `json:"error"`
 	}
-	body := errorMessage{M: val}
+	body := errorMessage{M: msg}
 	dat, err := json.Marshal(body)
 	if err != nil {
 		log.Printf("Error producing error json: %s", err)
-		return nil
+		return
 	}
-	return dat
+	rw.WriteHeader(code)
+	rw.Write(dat)
+}
+
+func respondWithJSON(rw http.ResponseWriter, code int, payload any) {
+	dat, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Error encoding response: %s", err)
+		respondWithError(rw, 500, "Something went wrong")
+		return
+	}
+
+	rw.WriteHeader(code)
+	rw.Write(dat)
 }
