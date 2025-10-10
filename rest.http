@@ -13,3 +13,7 @@ Content-Type: application/json
 {
     "body": "this is a sharbert test"
 }
+
+###
+
+POST http://localhost:8080/admin/reset

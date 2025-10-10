@@ -50,8 +50,8 @@ func main() {
 	servemux.HandleFunc("GET /api/healthz", endpoint_healthz)
 	servemux.HandleFunc("GET /admin/metrics", apiCfg.endpoint_metrics)
 	servemux.HandleFunc("POST /admin/reset", apiCfg.endpoint_reset)
-	servemux.HandleFunc("POST /api/validate_chirp", apiCfg.endpoint_validate_chirp)
 	servemux.HandleFunc("POST /api/users", apiCfg.endpoint_users)
+	servemux.HandleFunc("POST /api/chirps", apiCfg.endpoint_chirps)
 
 	server := &http.Server{
 		Addr:    ":" + PORT,
@@ -59,7 +59,7 @@ func main() {
 	}
 	log.Printf("Serving files from %s on port: %s\n", FILEPATHROOT, PORT)
 	go func() {
-		time.Sleep(5 * time.Second)
+		time.Sleep(15 * time.Second)
 		ctx, rel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer rel()
 		server.Shutdown(ctx)
@@ -103,35 +103,6 @@ func (cfg *apiConfig) endpoint_reset(resp http.ResponseWriter, req *http.Request
 	cfg.dbQueries.ClearUsers(req.Context())
 }
 
-type incomingChirp struct {
-	Body string `json:"body"`
-}
-
-type outgoingChirp struct {
-	Body string `json:"cleaned_body"`
-}
-
-func (cfg *apiConfig) endpoint_validate_chirp(resp http.ResponseWriter, req *http.Request) {
-	decoder := json.NewDecoder(req.Body)
-	msg := incomingChirp{}
-	if err := decoder.Decode(&msg); err != nil {
-		log.Printf("Error decoding parameters: %s", err)
-		respondWithError(resp, 500, "Something went wrong")
-		return
-	}
-
-	if len(msg.Body) > 140 {
-		respondWithError(resp, 400, "Chirp is too long")
-		return
-	}
-
-	/*respondWithJSON(resp, 200, struct {
-		Valid bool `json:"valid"`
-	}{Valid: true})*/
-
-	respondWithJSON(resp, 200, cleanChirpProfanity(msg))
-}
-
 func respondWithError(rw http.ResponseWriter, code int, msg string) {
 	type errorMessage struct {
 		M string `json:"error"`
@@ -159,7 +130,7 @@ func respondWithJSON(rw http.ResponseWriter, code int, payload any) {
 	rw.Write(dat)
 }
 
-func cleanChirpProfanity(in incomingChirp) outgoingChirp {
+func cleanChirpProfanity(in *Chirp) {
 	profanity := []string{"kerfuffle", "sharbert", "fornax"}
 	clean := []string{}
 	for v := range strings.SplitSeq(in.Body, " ") {
@@ -169,7 +140,7 @@ func cleanChirpProfanity(in incomingChirp) outgoingChirp {
 			clean = append(clean, v)
 		}
 	}
-	return outgoingChirp{Body: strings.Join(clean, " ")}
+	in.Body = strings.Join(clean, " ")
 }
 
 type User struct {
@@ -200,4 +171,41 @@ func (cfg *apiConfig) endpoint_users(rw http.ResponseWriter, req *http.Request) 
 	}
 	usr_struct := User(user)
 	respondWithJSON(rw, 201, usr_struct)
+}
+
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	UserID    uuid.UUID `json:"user_id"`
+	Body      string    `json:"body"`
+}
+
+func (cfg *apiConfig) endpoint_chirps(rw http.ResponseWriter, req *http.Request) {
+	decoder := json.NewDecoder(req.Body)
+	msg := Chirp{}
+	if err := decoder.Decode(&msg); err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		respondWithError(rw, 500, "Something went wrong")
+		return
+	}
+
+	if len(msg.Body) > 140 {
+		respondWithError(rw, 400, "Chirp is too long")
+		return
+	}
+	cleanChirpProfanity(&msg)
+
+	dat, err := cfg.dbQueries.CreateChirp(req.Context(), database.CreateChirpParams{
+		UserID: msg.UserID,
+		Body:   msg.Body,
+	})
+	if err != nil {
+		log.Printf("Error executing query: %s", err)
+		respondWithError(rw, 500, fmt.Sprintf("Error executing query: %s", err))
+		return
+	}
+	chirpBack := Chirp(dat)
+
+	respondWithJSON(rw, 201, chirpBack)
 }
