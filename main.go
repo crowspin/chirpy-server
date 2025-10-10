@@ -2,14 +2,20 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/crowspin/chirpy-server/internal/database"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 const (
@@ -19,10 +25,22 @@ const (
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	dbQueries      *database.Queries
 }
 
 func main() {
-	apiCfg := apiConfig{}
+	godotenv.Load()
+	dbUrl := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbUrl)
+	if err != nil {
+		fmt.Println("Couldn't open connection to database!")
+		os.Exit(1)
+	}
+	dbQueries := database.New(db)
+
+	apiCfg := apiConfig{
+		dbQueries: dbQueries,
+	}
 	servemux := http.ServeMux{}
 	servemux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(FILEPATHROOT)))))
 	servemux.HandleFunc("GET /api/healthz", endpoint_healthz)
