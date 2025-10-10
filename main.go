@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/crowspin/chirpy-server/internal/auth"
 	"github.com/crowspin/chirpy-server/internal/database"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -51,6 +52,7 @@ func main() {
 	servemux.HandleFunc("GET /admin/metrics", apiCfg.endpoint_metrics)
 	servemux.HandleFunc("POST /admin/reset", apiCfg.endpoint_reset)
 	servemux.HandleFunc("POST /api/users", apiCfg.endpoint_users)
+	servemux.HandleFunc("POST /api/login", apiCfg.endpoint_login)
 	servemux.HandleFunc("POST /api/chirps", apiCfg.endpoint_chirps_post)
 	servemux.HandleFunc("GET /api/chirps", apiCfg.endpoint_chirps_get)
 	servemux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.endpoint_chirps_get_one)
@@ -146,32 +148,46 @@ func cleanChirpProfanity(in *Chirp) {
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
+	ID             uuid.UUID `json:"id"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Email          string    `json:"email"`
+	HashedPassword string    `json:"password"`
 }
 
 func (cfg *apiConfig) endpoint_users(rw http.ResponseWriter, req *http.Request) {
-	type email_in struct {
-		Email string `json:"email"`
-	}
-
 	decoder := json.NewDecoder(req.Body)
-	msg := email_in{}
+	msg := User{}
 	if err := decoder.Decode(&msg); err != nil {
 		log.Printf("Error decoding parameters: %s", err)
 		respondWithError(rw, 500, "Something went wrong")
 		return
 	}
 
-	user, err := cfg.dbQueries.CreateUser(req.Context(), msg.Email)
+	if msg.Email == "" || msg.HashedPassword == "" {
+		log.Println("Invalid request, required values not supplied")
+		respondWithError(rw, 500, "Invalid request, required values not supplied")
+		return
+	}
+
+	hash, err := auth.HashPassword(msg.HashedPassword)
+	if err != nil {
+		log.Printf("Error operating on supplied password: %s", err)
+		respondWithError(rw, 500, "Error operating on supplied password")
+		return
+	}
+
+	user, err := cfg.dbQueries.CreateUser(req.Context(), database.CreateUserParams{
+		Email:          msg.Email,
+		HashedPassword: hash,
+	})
 	if err != nil {
 		log.Printf("Error executing query: %s", err)
 		respondWithError(rw, 500, fmt.Sprintf("Error executing query: %s", err))
 		return
 	}
 	usr_struct := User(user)
+	usr_struct.HashedPassword = ""
 	respondWithJSON(rw, 201, usr_struct)
 }
 
@@ -244,4 +260,29 @@ func (cfg *apiConfig) endpoint_chirps_get_one(rw http.ResponseWriter, req *http.
 	chirpBack := Chirp(dat)
 
 	respondWithJSON(rw, 200, chirpBack)
+}
+
+func (cfg *apiConfig) endpoint_login(rw http.ResponseWriter, req *http.Request) {
+	decoder := json.NewDecoder(req.Body)
+	msg := User{}
+	if err := decoder.Decode(&msg); err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		respondWithError(rw, 500, "Something went wrong")
+		return
+	}
+
+	rv, err := cfg.dbQueries.FetchUserByEmail(req.Context(), msg.Email)
+	if err != nil {
+		respondWithError(rw, 401, "Incorrect email or password")
+		return
+	}
+
+	if success, err := auth.CheckPasswordHash(msg.HashedPassword, rv.HashedPassword); err != nil || !success {
+		respondWithError(rw, 401, "Incorrect email or password")
+		return
+	}
+
+	userback := User(rv)
+	userback.HashedPassword = ""
+	respondWithJSON(rw, 200, userback)
 }
