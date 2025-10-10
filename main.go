@@ -53,6 +53,7 @@ func main() {
 	servemux.HandleFunc("POST /api/users", apiCfg.endpoint_users)
 	servemux.HandleFunc("POST /api/chirps", apiCfg.endpoint_chirps_post)
 	servemux.HandleFunc("GET /api/chirps", apiCfg.endpoint_chirps_get)
+	servemux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.endpoint_chirps_get_one)
 
 	server := &http.Server{
 		Addr:    ":" + PORT,
@@ -222,6 +223,25 @@ func (cfg *apiConfig) endpoint_chirps_get(rw http.ResponseWriter, req *http.Requ
 	for it, val := range dat {
 		chirpBack[it] = Chirp(val)
 	}
+
+	respondWithJSON(rw, 200, chirpBack)
+}
+
+func (cfg *apiConfig) endpoint_chirps_get_one(rw http.ResponseWriter, req *http.Request) {
+	uu, err := uuid.Parse(req.PathValue("chirpID"))
+	if err != nil {
+		log.Printf("Error parsing UUID from request: %s", err)
+		rw.WriteHeader(404)
+		return
+	}
+
+	dat, err := cfg.dbQueries.FetchOneChirp(req.Context(), uu)
+	if err != nil {
+		log.Printf("Error executing query: %s", err)
+		rw.WriteHeader(404)
+		return
+	}
+	chirpBack := Chirp(dat)
 
 	respondWithJSON(rw, 200, chirpBack)
 }
