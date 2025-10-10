@@ -51,7 +51,8 @@ func main() {
 	servemux.HandleFunc("GET /admin/metrics", apiCfg.endpoint_metrics)
 	servemux.HandleFunc("POST /admin/reset", apiCfg.endpoint_reset)
 	servemux.HandleFunc("POST /api/users", apiCfg.endpoint_users)
-	servemux.HandleFunc("POST /api/chirps", apiCfg.endpoint_chirps)
+	servemux.HandleFunc("POST /api/chirps", apiCfg.endpoint_chirps_post)
+	servemux.HandleFunc("GET /api/chirps", apiCfg.endpoint_chirps_get)
 
 	server := &http.Server{
 		Addr:    ":" + PORT,
@@ -181,7 +182,7 @@ type Chirp struct {
 	Body      string    `json:"body"`
 }
 
-func (cfg *apiConfig) endpoint_chirps(rw http.ResponseWriter, req *http.Request) {
+func (cfg *apiConfig) endpoint_chirps_post(rw http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
 	msg := Chirp{}
 	if err := decoder.Decode(&msg); err != nil {
@@ -208,4 +209,19 @@ func (cfg *apiConfig) endpoint_chirps(rw http.ResponseWriter, req *http.Request)
 	chirpBack := Chirp(dat)
 
 	respondWithJSON(rw, 201, chirpBack)
+}
+
+func (cfg *apiConfig) endpoint_chirps_get(rw http.ResponseWriter, req *http.Request) {
+	dat, err := cfg.dbQueries.FetchAllChirps(req.Context())
+	if err != nil {
+		log.Printf("Error executing query: %s", err)
+		respondWithError(rw, 500, fmt.Sprintf("Error executing query: %s", err))
+		return
+	}
+	chirpBack := make([]Chirp, len(dat))
+	for it, val := range dat {
+		chirpBack[it] = Chirp(val)
+	}
+
+	respondWithJSON(rw, 200, chirpBack)
 }
