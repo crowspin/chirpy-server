@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"errors"
+	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/alexedwards/argon2id"
@@ -35,4 +38,13 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	} else {
 		return uuid.Parse(subj)
 	}
+}
+func GetBearerToken(headers http.Header) (string, error) {
+	val := headers.Get("Authorization")
+	re := regexp.MustCompile(`(?m)Bearer (.*)$`)
+	match := re.FindStringSubmatch(val)
+	if match == nil {
+		return "", errors.New("no bearer token available")
+	}
+	return match[1], nil
 }

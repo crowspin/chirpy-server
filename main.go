@@ -26,15 +26,17 @@ const (
 )
 
 type apiConfig struct {
-	fileserverHits atomic.Int32
-	dbQueries      *database.Queries
-	platform       string
+	fileserverHits  atomic.Int32
+	dbQueries       *database.Queries
+	platform        string
+	authTokenSecret string
 }
 
 func main() {
 	godotenv.Load()
 	dbUrl := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
+	tokensecret := os.Getenv("TOKEN_SECRET")
 	db, err := sql.Open("postgres", dbUrl)
 	if err != nil {
 		fmt.Println("Couldn't open connection to database!")
@@ -43,8 +45,9 @@ func main() {
 	dbQueries := database.New(db)
 
 	apiCfg := apiConfig{
-		dbQueries: dbQueries,
-		platform:  platform,
+		dbQueries:       dbQueries,
+		platform:        platform,
+		authTokenSecret: tokensecret,
 	}
 	servemux := http.ServeMux{}
 	servemux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(FILEPATHROOT)))))
@@ -148,11 +151,13 @@ func cleanChirpProfanity(in *Chirp) {
 }
 
 type User struct {
-	ID             uuid.UUID `json:"id"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	Email          string    `json:"email"`
-	HashedPassword string    `json:"password"`
+	ID               uuid.UUID `json:"id"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	Email            string    `json:"email"`
+	HashedPassword   string    `json:"password"`
+	ExpiresInSeconds int       `json:"expires_in_seconds"`
+	Token            string    `json:"token"`
 }
 
 func (cfg *apiConfig) endpoint_users(rw http.ResponseWriter, req *http.Request) {
@@ -186,8 +191,12 @@ func (cfg *apiConfig) endpoint_users(rw http.ResponseWriter, req *http.Request) 
 		respondWithError(rw, 500, fmt.Sprintf("Error executing query: %s", err))
 		return
 	}
-	usr_struct := User(user)
-	usr_struct.HashedPassword = ""
+	usr_struct := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
 	respondWithJSON(rw, 201, usr_struct)
 }
 
@@ -197,6 +206,7 @@ type Chirp struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	UserID    uuid.UUID `json:"user_id"`
 	Body      string    `json:"body"`
+	Token     string    `json:"token"`
 }
 
 func (cfg *apiConfig) endpoint_chirps_post(rw http.ResponseWriter, req *http.Request) {
@@ -208,6 +218,17 @@ func (cfg *apiConfig) endpoint_chirps_post(rw http.ResponseWriter, req *http.Req
 		return
 	}
 
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(rw, 401, "No auth token supplied")
+	}
+
+	userId, err := auth.ValidateJWT(token, cfg.authTokenSecret)
+	if err != nil {
+		respondWithError(rw, 401, err.Error())
+		return
+	}
+
 	if len(msg.Body) > 140 {
 		respondWithError(rw, 400, "Chirp is too long")
 		return
@@ -215,7 +236,7 @@ func (cfg *apiConfig) endpoint_chirps_post(rw http.ResponseWriter, req *http.Req
 	cleanChirpProfanity(&msg)
 
 	dat, err := cfg.dbQueries.CreateChirp(req.Context(), database.CreateChirpParams{
-		UserID: msg.UserID,
+		UserID: userId,
 		Body:   msg.Body,
 	})
 	if err != nil {
@@ -223,7 +244,13 @@ func (cfg *apiConfig) endpoint_chirps_post(rw http.ResponseWriter, req *http.Req
 		respondWithError(rw, 500, fmt.Sprintf("Error executing query: %s", err))
 		return
 	}
-	chirpBack := Chirp(dat)
+	chirpBack := Chirp{
+		ID:        dat.ID,
+		UserID:    dat.UserID,
+		CreatedAt: dat.CreatedAt,
+		UpdatedAt: dat.UpdatedAt,
+		Body:      dat.Body,
+	}
 
 	respondWithJSON(rw, 201, chirpBack)
 }
@@ -237,7 +264,13 @@ func (cfg *apiConfig) endpoint_chirps_get(rw http.ResponseWriter, req *http.Requ
 	}
 	chirpBack := make([]Chirp, len(dat))
 	for it, val := range dat {
-		chirpBack[it] = Chirp(val)
+		chirpBack[it] = Chirp{
+			ID:        val.ID,
+			UserID:    val.UserID,
+			CreatedAt: val.CreatedAt,
+			UpdatedAt: val.UpdatedAt,
+			Body:      val.Body,
+		}
 	}
 
 	respondWithJSON(rw, 200, chirpBack)
@@ -257,7 +290,13 @@ func (cfg *apiConfig) endpoint_chirps_get_one(rw http.ResponseWriter, req *http.
 		rw.WriteHeader(404)
 		return
 	}
-	chirpBack := Chirp(dat)
+	chirpBack := Chirp{
+		ID:        dat.ID,
+		UserID:    dat.UserID,
+		CreatedAt: dat.CreatedAt,
+		UpdatedAt: dat.UpdatedAt,
+		Body:      dat.Body,
+	}
 
 	respondWithJSON(rw, 200, chirpBack)
 }
@@ -282,7 +321,22 @@ func (cfg *apiConfig) endpoint_login(rw http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	userback := User(rv)
-	userback.HashedPassword = ""
+	expSeconds := 3600
+	if 0 < msg.ExpiresInSeconds && msg.ExpiresInSeconds < 3600 {
+		expSeconds = msg.ExpiresInSeconds
+	}
+
+	token, err := auth.MakeJWT(rv.ID, cfg.authTokenSecret, time.Duration(expSeconds)*time.Second)
+	if err != nil {
+		respondWithError(rw, 500, "Failed to produce JWT")
+	}
+
+	userback := User{
+		ID:        rv.ID,
+		CreatedAt: rv.CreatedAt,
+		UpdatedAt: rv.UpdatedAt,
+		Email:     rv.Email,
+		Token:     token,
+	}
 	respondWithJSON(rw, 200, userback)
 }
