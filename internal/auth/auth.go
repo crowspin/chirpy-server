@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"regexp"
@@ -47,4 +49,10 @@ func GetBearerToken(headers http.Header) (string, error) {
 		return "", errors.New("no bearer token available")
 	}
 	return match[1], nil
+}
+func MakeRefeshToken() string {
+	key := make([]byte, 32)
+	rand.Read(key)
+	return hex.EncodeToString(key)
+	//Lesson instructed that this should have a secondary error return, but if you read the docs, rand.Read never fails and only returns an error as a formality; it's impossible for this function to produce an error.
 }

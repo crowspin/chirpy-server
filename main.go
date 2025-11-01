@@ -56,6 +56,8 @@ func main() {
 	servemux.HandleFunc("POST /admin/reset", apiCfg.endpoint_reset)
 	servemux.HandleFunc("POST /api/users", apiCfg.endpoint_users)
 	servemux.HandleFunc("POST /api/login", apiCfg.endpoint_login)
+	servemux.HandleFunc("POST /api/refresh", apiCfg.endpoint_refresh)
+	servemux.HandleFunc("POST /api/revoke", apiCfg.endpoint_revoke)
 	servemux.HandleFunc("POST /api/chirps", apiCfg.endpoint_chirps_post)
 	servemux.HandleFunc("GET /api/chirps", apiCfg.endpoint_chirps_get)
 	servemux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.endpoint_chirps_get_one)
@@ -151,13 +153,12 @@ func cleanChirpProfanity(in *Chirp) {
 }
 
 type User struct {
-	ID               uuid.UUID `json:"id"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
-	Email            string    `json:"email"`
-	HashedPassword   string    `json:"password"`
-	ExpiresInSeconds int       `json:"expires_in_seconds"`
-	Token            string    `json:"token"`
+	ID             uuid.UUID `json:"id"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Email          string    `json:"email"`
+	HashedPassword string    `json:"password"`
+	Token          string    `json:"token"`
 }
 
 func (cfg *apiConfig) endpoint_users(rw http.ResponseWriter, req *http.Request) {
@@ -301,6 +302,15 @@ func (cfg *apiConfig) endpoint_chirps_get_one(rw http.ResponseWriter, req *http.
 	respondWithJSON(rw, 200, chirpBack)
 }
 
+type LoginResponse struct {
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
+}
+
 func (cfg *apiConfig) endpoint_login(rw http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
 	msg := User{}
@@ -321,22 +331,69 @@ func (cfg *apiConfig) endpoint_login(rw http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	expSeconds := 3600
-	if 0 < msg.ExpiresInSeconds && msg.ExpiresInSeconds < 3600 {
-		expSeconds = msg.ExpiresInSeconds
-	}
-
-	token, err := auth.MakeJWT(rv.ID, cfg.authTokenSecret, time.Duration(expSeconds)*time.Second)
+	token, err := auth.MakeJWT(rv.ID, cfg.authTokenSecret, time.Hour)
 	if err != nil {
 		respondWithError(rw, 500, "Failed to produce JWT")
+		return
 	}
 
-	userback := User{
-		ID:        rv.ID,
-		CreatedAt: rv.CreatedAt,
-		UpdatedAt: rv.UpdatedAt,
-		Email:     rv.Email,
-		Token:     token,
+	dbreftok, err := cfg.dbQueries.CreateRefreshToken(req.Context(), database.CreateRefreshTokenParams{
+		Token:     auth.MakeRefeshToken(),
+		UserID:    rv.ID,
+		ExpiresAt: time.Now().Add(time.Duration(60*24) * time.Hour),
+	})
+	if err != nil {
+		respondWithError(rw, 500, "Failed to insert new refresh token")
+		return
 	}
-	respondWithJSON(rw, 200, userback)
+
+	respondWithJSON(rw, 200, LoginResponse{
+		ID:           dbreftok.UserID,
+		CreatedAt:    dbreftok.CreatedAt,
+		UpdatedAt:    dbreftok.UpdatedAt,
+		Email:        rv.Email,
+		Token:        token,
+		RefreshToken: dbreftok.Token,
+	})
+}
+
+func (cfg *apiConfig) endpoint_refresh(rw http.ResponseWriter, req *http.Request) {
+	reftok, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(rw, 401, "Refresh token not found")
+		return
+	}
+	dbrow, err := cfg.dbQueries.FetchRefreshToken(req.Context(), reftok)
+	if err != nil {
+		fmt.Printf("%v\n", err)
+		respondWithError(rw, 401, "Refresh token invalid")
+		return
+	}
+	acctok, err := auth.MakeJWT(dbrow.UserID, cfg.authTokenSecret, time.Hour)
+	if err != nil {
+		respondWithError(rw, 500, "Failed to produce access token")
+		return
+	}
+	respondWithJSON(rw, 200, struct {
+		Token string `json:"token"`
+	}{Token: acctok})
+}
+
+func (cfg *apiConfig) endpoint_revoke(rw http.ResponseWriter, req *http.Request) {
+	reftok, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(rw, 401, "Refresh token not found")
+		return
+	}
+	dbrow, err := cfg.dbQueries.FetchRefreshToken(req.Context(), reftok)
+	if err != nil {
+		respondWithError(rw, 401, "Refresh token invalid")
+		return
+	}
+	dbrow, err = cfg.dbQueries.RevokeRefreshToken(req.Context(), dbrow.UserID)
+	if err != nil {
+		respondWithError(rw, 500, "Failed to revoke token")
+		return
+	}
+	rw.WriteHeader(204)
 }
