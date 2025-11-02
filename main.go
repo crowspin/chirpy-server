@@ -56,7 +56,8 @@ func main() {
 	servemux.HandleFunc("GET /api/healthz", endpoint_healthz)
 	servemux.HandleFunc("GET /admin/metrics", apiCfg.endpoint_metrics)
 	servemux.HandleFunc("POST /admin/reset", apiCfg.endpoint_reset)
-	servemux.HandleFunc("POST /api/users", apiCfg.endpoint_users)
+	servemux.HandleFunc("POST /api/users", apiCfg.endpoint_users_post)
+	servemux.HandleFunc("PUT /api/users", apiCfg.endpoint_users_put)
 	servemux.HandleFunc("POST /api/login", apiCfg.endpoint_login)
 	servemux.HandleFunc("POST /api/refresh", apiCfg.endpoint_refresh)
 	servemux.HandleFunc("POST /api/revoke", apiCfg.endpoint_revoke)
@@ -163,7 +164,7 @@ type User struct {
 	Token          string    `json:"token"`
 }
 
-func (cfg *apiConfig) endpoint_users(rw http.ResponseWriter, req *http.Request) {
+func (cfg *apiConfig) endpoint_users_post(rw http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
 	msg := User{}
 	if err := decoder.Decode(&msg); err != nil {
@@ -397,4 +398,59 @@ func (cfg *apiConfig) endpoint_revoke(rw http.ResponseWriter, req *http.Request)
 		return
 	}
 	rw.WriteHeader(204)
+}
+
+type UpdateUserData struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func (cfg *apiConfig) endpoint_users_put(rw http.ResponseWriter, req *http.Request) {
+	acctok, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(rw, 401, "Access token not found")
+		return
+	}
+
+	userId, err := auth.ValidateJWT(acctok, cfg.authTokenSecret)
+	if err != nil {
+		respondWithError(rw, 401, err.Error())
+		return
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	msg := UpdateUserData{}
+	if err := decoder.Decode(&msg); err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		respondWithError(rw, 500, "Something went wrong")
+		return
+	}
+
+	if msg.Email == "" || msg.Password == "" {
+		respondWithError(rw, 401, "Invalid use of resource")
+		return
+	}
+
+	hash, err := auth.HashPassword(msg.Password)
+	if err != nil {
+		respondWithError(rw, 500, "Error operating on supplied password")
+		return
+	}
+
+	userback, err := cfg.dbQueries.UpdateUserLogin(req.Context(), database.UpdateUserLoginParams{
+		ID:             userId,
+		Email:          msg.Email,
+		HashedPassword: hash,
+	})
+	if err != nil {
+		respondWithError(rw, 500, "Error occurred while updating database")
+		return
+	}
+
+	respondWithJSON(rw, 200, User{
+		ID:        userback.ID,
+		CreatedAt: userback.CreatedAt,
+		UpdatedAt: userback.UpdatedAt,
+		Email:     userback.Email,
+	})
 }
