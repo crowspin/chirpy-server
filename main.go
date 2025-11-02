@@ -21,8 +21,10 @@ import (
 )
 
 const (
-	FILEPATHROOT = "."
-	PORT         = "8080"
+	FILEPATHROOT         = "."
+	PORT                 = "8080"
+	ACCESSTOKENLIFETIME  = time.Hour
+	REFRESHTOKENLIFETIME = time.Duration(60*24) * time.Hour
 )
 
 type apiConfig struct {
@@ -331,7 +333,7 @@ func (cfg *apiConfig) endpoint_login(rw http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	token, err := auth.MakeJWT(rv.ID, cfg.authTokenSecret, time.Hour)
+	token, err := auth.MakeJWT(rv.ID, cfg.authTokenSecret, ACCESSTOKENLIFETIME)
 	if err != nil {
 		respondWithError(rw, 500, "Failed to produce JWT")
 		return
@@ -340,7 +342,7 @@ func (cfg *apiConfig) endpoint_login(rw http.ResponseWriter, req *http.Request) 
 	dbreftok, err := cfg.dbQueries.CreateRefreshToken(req.Context(), database.CreateRefreshTokenParams{
 		Token:     auth.MakeRefeshToken(),
 		UserID:    rv.ID,
-		ExpiresAt: time.Now().Add(time.Duration(60*24) * time.Hour),
+		ExpiresAt: time.Now().Add(REFRESHTOKENLIFETIME),
 	})
 	if err != nil {
 		respondWithError(rw, 500, "Failed to insert new refresh token")
@@ -365,11 +367,10 @@ func (cfg *apiConfig) endpoint_refresh(rw http.ResponseWriter, req *http.Request
 	}
 	dbrow, err := cfg.dbQueries.FetchRefreshToken(req.Context(), reftok)
 	if err != nil {
-		fmt.Printf("%v\n", err)
 		respondWithError(rw, 401, "Refresh token invalid")
 		return
 	}
-	acctok, err := auth.MakeJWT(dbrow.UserID, cfg.authTokenSecret, time.Hour)
+	acctok, err := auth.MakeJWT(dbrow.UserID, cfg.authTokenSecret, ACCESSTOKENLIFETIME)
 	if err != nil {
 		respondWithError(rw, 500, "Failed to produce access token")
 		return
