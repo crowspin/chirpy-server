@@ -64,6 +64,7 @@ func main() {
 	servemux.HandleFunc("POST /api/chirps", apiCfg.endpoint_chirps_post)
 	servemux.HandleFunc("GET /api/chirps", apiCfg.endpoint_chirps_get)
 	servemux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.endpoint_chirps_get_one)
+	servemux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.endpoint_chirps_delete)
 
 	server := &http.Server{
 		Addr:    ":" + PORT,
@@ -406,15 +407,9 @@ type UpdateUserData struct {
 }
 
 func (cfg *apiConfig) endpoint_users_put(rw http.ResponseWriter, req *http.Request) {
-	acctok, err := auth.GetBearerToken(req.Header)
+	userId, err, code := cfg.validateAccessTokenInHeader(req)
 	if err != nil {
-		respondWithError(rw, 401, "Access token not found")
-		return
-	}
-
-	userId, err := auth.ValidateJWT(acctok, cfg.authTokenSecret)
-	if err != nil {
-		respondWithError(rw, 401, err.Error())
+		respondWithError(rw, code, err.Error())
 		return
 	}
 
@@ -453,4 +448,41 @@ func (cfg *apiConfig) endpoint_users_put(rw http.ResponseWriter, req *http.Reque
 		UpdatedAt: userback.UpdatedAt,
 		Email:     userback.Email,
 	})
+}
+
+func (cfg *apiConfig) validateAccessTokenInHeader(req *http.Request) (uuid.UUID, error, int) {
+	acctok, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("access token not found: %v", err), 401
+	}
+
+	userId, err := auth.ValidateJWT(acctok, cfg.authTokenSecret)
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("invalid access token: %v", err), 401
+	}
+	return userId, nil, 0
+}
+
+func (cfg *apiConfig) endpoint_chirps_delete(rw http.ResponseWriter, req *http.Request) {
+
+	//token auth, userid must match
+	//	fail with 403
+	//delete chirp by id
+	//	success 204
+	//	chirp not found 404
+
+	userID, err, code := cfg.validateAccessTokenInHeader(req)
+	if err != nil {
+		respondWithError(rw, code, err.Error())
+		return
+	}
+
+	chirpID, err := uuid.Parse(req.PathValue("chirpID"))
+	if err != nil {
+		respondWithError(rw, 404, fmt.Sprintf("Error parsing UUID from request: %s", err))
+		return
+	}
+
+	//Life ain't hard enough so I'm fiddling around with how I might perform the userID matches and chirpID exists tests at the same time while still getting different responses from the SQL server.
+	//Could just do two queries and a logic step in GO, but that'd be too easy.
 }
