@@ -407,7 +407,7 @@ type UpdateUserData struct {
 }
 
 func (cfg *apiConfig) endpoint_users_put(rw http.ResponseWriter, req *http.Request) {
-	userId, err, code := cfg.validateAccessTokenInHeader(req)
+	userId, code, err := cfg.validateAccessTokenInHeader(req)
 	if err != nil {
 		respondWithError(rw, code, err.Error())
 		return
@@ -450,28 +450,21 @@ func (cfg *apiConfig) endpoint_users_put(rw http.ResponseWriter, req *http.Reque
 	})
 }
 
-func (cfg *apiConfig) validateAccessTokenInHeader(req *http.Request) (uuid.UUID, error, int) {
+func (cfg *apiConfig) validateAccessTokenInHeader(req *http.Request) (uuid.UUID, int, error) {
 	acctok, err := auth.GetBearerToken(req.Header)
 	if err != nil {
-		return uuid.UUID{}, fmt.Errorf("access token not found: %v", err), 401
+		return uuid.UUID{}, 401, fmt.Errorf("access token not found: %v", err)
 	}
 
 	userId, err := auth.ValidateJWT(acctok, cfg.authTokenSecret)
 	if err != nil {
-		return uuid.UUID{}, fmt.Errorf("invalid access token: %v", err), 401
+		return uuid.UUID{}, 401, fmt.Errorf("invalid access token: %v", err)
 	}
-	return userId, nil, 0
+	return userId, 0, nil
 }
 
 func (cfg *apiConfig) endpoint_chirps_delete(rw http.ResponseWriter, req *http.Request) {
-
-	//token auth, userid must match
-	//	fail with 403
-	//delete chirp by id
-	//	success 204
-	//	chirp not found 404
-
-	userID, err, code := cfg.validateAccessTokenInHeader(req)
+	userID, code, err := cfg.validateAccessTokenInHeader(req)
 	if err != nil {
 		respondWithError(rw, code, err.Error())
 		return
@@ -483,6 +476,18 @@ func (cfg *apiConfig) endpoint_chirps_delete(rw http.ResponseWriter, req *http.R
 		return
 	}
 
-	//Life ain't hard enough so I'm fiddling around with how I might perform the userID matches and chirpID exists tests at the same time while still getting different responses from the SQL server.
-	//Could just do two queries and a logic step in GO, but that'd be too easy.
+	//seriously this is supposed to be a "difficulty 8" lesson, so i figured i'd ought to make it hard and learn something
+	rv, err := cfg.dbQueries.DeleteChirp(req.Context(), database.DeleteChirpParams{
+		ID:     chirpID,
+		UserID: userID,
+	})
+	if err != nil {
+		respondWithError(rw, 404, "Chirp not found.")
+		return
+	}
+	if rv.Deletedct == 0 {
+		respondWithError(rw, 403, "You do not have authorization!")
+		return
+	}
+	rw.WriteHeader(204)
 }
