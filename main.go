@@ -267,12 +267,29 @@ func (cfg *apiConfig) endpoint_chirps_post(rw http.ResponseWriter, req *http.Req
 }
 
 func (cfg *apiConfig) endpoint_chirps_get(rw http.ResponseWriter, req *http.Request) {
-	dat, err := cfg.dbQueries.FetchAllChirps(req.Context())
-	if err != nil {
-		log.Printf("Error executing query: %s", err)
-		respondWithError(rw, 500, fmt.Sprintf("Error executing query: %s", err))
-		return
+
+	uid := req.URL.Query().Get("author_id")
+	var dat []database.Chirp
+	var err error
+	if uid == "" {
+		dat, err = cfg.dbQueries.FetchAllChirps(req.Context())
+		if err != nil {
+			respondWithError(rw, 500, fmt.Sprintf("Error executing query: %s", err))
+			return
+		}
+	} else {
+		author_uuid, err := uuid.Parse(uid)
+		if err != nil {
+			respondWithError(rw, 500, fmt.Sprintf("Malformed UUID: %s", err))
+			return
+		}
+		dat, err = cfg.dbQueries.FetchAllChirpsByAuthor(req.Context(), author_uuid)
+		if err != nil {
+			respondWithError(rw, 500, fmt.Sprintf("Error executing query: %s", err))
+			return
+		}
 	}
+
 	chirpBack := make([]Chirp, len(dat))
 	for it, val := range dat {
 		chirpBack[it] = Chirp{
