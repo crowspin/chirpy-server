@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -288,6 +289,13 @@ func (cfg *apiConfig) endpoint_chirps_get(rw http.ResponseWriter, req *http.Requ
 			respondWithError(rw, 500, fmt.Sprintf("Error executing query: %s", err))
 			return
 		}
+	}
+
+	order := req.URL.Query().Get("sort")
+	if order == "desc" {
+		sort.Slice(dat, func(i, j int) bool {
+			return dat[i].CreatedAt.After(dat[j].CreatedAt)
+		})
 	}
 
 	chirpBack := make([]Chirp, len(dat))
