@@ -32,6 +32,7 @@ type apiConfig struct {
 	dbQueries       *database.Queries
 	platform        string
 	authTokenSecret string
+	polkaKey        string
 }
 
 func main() {
@@ -39,6 +40,7 @@ func main() {
 	dbUrl := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
 	tokensecret := os.Getenv("TOKEN_SECRET")
+	polkakey := os.Getenv("POLKA_KEY")
 	db, err := sql.Open("postgres", dbUrl)
 	if err != nil {
 		fmt.Println("Couldn't open connection to database!")
@@ -50,6 +52,7 @@ func main() {
 		dbQueries:       dbQueries,
 		platform:        platform,
 		authTokenSecret: tokensecret,
+		polkaKey:        polkakey,
 	}
 	servemux := http.ServeMux{}
 	servemux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(FILEPATHROOT)))))
@@ -516,6 +519,12 @@ func (cfg *apiConfig) endpoint_polka_webhooks(rw http.ResponseWriter, req *http.
 	msg := WebhookBody{}
 	if err := decoder.Decode(&msg); err != nil {
 		respondWithError(rw, 500, "Couldn't decode request body")
+		return
+	}
+
+	key, err := auth.GetAPIKey(req.Header)
+	if err != nil || key != cfg.polkaKey {
+		respondWithError(rw, 401, "API Key mismatch")
 		return
 	}
 

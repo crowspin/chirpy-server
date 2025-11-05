@@ -42,17 +42,25 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	}
 }
 func GetBearerToken(headers http.Header) (string, error) {
-	val := headers.Get("Authorization")
-	re := regexp.MustCompile(`(?m)Bearer (.*)$`)
-	match := re.FindStringSubmatch(val)
-	if match == nil {
-		return "", errors.New("no bearer token available")
-	}
-	return match[1], nil
+	return authorizationHeaderRegex(`(?m)Bearer (.*)$`, headers)
 }
+
 func MakeRefeshToken() string {
 	key := make([]byte, 32)
 	rand.Read(key)
 	return hex.EncodeToString(key)
 	//Lesson instructed that this should have a secondary error return, but if you read the docs, rand.Read never fails and only returns an error as a formality; it's impossible for this function to produce an error.
+}
+
+func GetAPIKey(headers http.Header) (string, error) {
+	return authorizationHeaderRegex(`(?m)ApiKey (.*)$`, headers)
+}
+func authorizationHeaderRegex(pattern string, headers http.Header) (string, error) {
+	val := headers.Get("Authorization")
+	re := regexp.MustCompile(pattern)
+	match := re.FindStringSubmatch(val)
+	if match == nil {
+		return "", errors.New("no token available")
+	}
+	return match[1], nil
 }
