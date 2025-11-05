@@ -65,6 +65,7 @@ func main() {
 	servemux.HandleFunc("GET /api/chirps", apiCfg.endpoint_chirps_get)
 	servemux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.endpoint_chirps_get_one)
 	servemux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.endpoint_chirps_delete)
+	servemux.HandleFunc("POST /api/polka/webhooks", apiCfg.endpoint_polka_webhooks)
 
 	server := &http.Server{
 		Addr:    ":" + PORT,
@@ -103,7 +104,7 @@ func (cfg *apiConfig) endpoint_metrics(resp http.ResponseWriter, req *http.Reque
 				<p>Chirpy has been visited %d times!</p>
 			</body>
 		</html>
-`, cfg.fileserverHits.Load()))
+	`, cfg.fileserverHits.Load()))
 }
 
 func (cfg *apiConfig) endpoint_reset(resp http.ResponseWriter, req *http.Request) {
@@ -163,6 +164,7 @@ type User struct {
 	Email          string    `json:"email"`
 	HashedPassword string    `json:"password"`
 	Token          string    `json:"token"`
+	IsChirpyRed    bool      `json:"is_chirpy_red"`
 }
 
 func (cfg *apiConfig) endpoint_users_post(rw http.ResponseWriter, req *http.Request) {
@@ -197,10 +199,11 @@ func (cfg *apiConfig) endpoint_users_post(rw http.ResponseWriter, req *http.Requ
 		return
 	}
 	usr_struct := User{
-		ID:        user.ID,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-		Email:     user.Email,
+		ID:          user.ID,
+		CreatedAt:   user.CreatedAt,
+		UpdatedAt:   user.UpdatedAt,
+		Email:       user.Email,
+		IsChirpyRed: user.IsChirpyRed,
 	}
 	respondWithJSON(rw, 201, usr_struct)
 }
@@ -313,6 +316,7 @@ type LoginResponse struct {
 	Email        string    `json:"email"`
 	Token        string    `json:"token"`
 	RefreshToken string    `json:"refresh_token"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 }
 
 func (cfg *apiConfig) endpoint_login(rw http.ResponseWriter, req *http.Request) {
@@ -358,6 +362,7 @@ func (cfg *apiConfig) endpoint_login(rw http.ResponseWriter, req *http.Request) 
 		Email:        rv.Email,
 		Token:        token,
 		RefreshToken: dbreftok.Token,
+		IsChirpyRed:  rv.IsChirpyRed,
 	})
 }
 
@@ -443,10 +448,11 @@ func (cfg *apiConfig) endpoint_users_put(rw http.ResponseWriter, req *http.Reque
 	}
 
 	respondWithJSON(rw, 200, User{
-		ID:        userback.ID,
-		CreatedAt: userback.CreatedAt,
-		UpdatedAt: userback.UpdatedAt,
-		Email:     userback.Email,
+		ID:          userback.ID,
+		CreatedAt:   userback.CreatedAt,
+		UpdatedAt:   userback.UpdatedAt,
+		Email:       userback.Email,
+		IsChirpyRed: userback.IsChirpyRed,
 	})
 }
 
@@ -490,4 +496,44 @@ func (cfg *apiConfig) endpoint_chirps_delete(rw http.ResponseWriter, req *http.R
 		return
 	}
 	rw.WriteHeader(204)
+}
+
+type WebhookData struct {
+	UserID uuid.UUID `json:"user_id"`
+}
+
+type WebhookBody struct {
+	Event string      `json:"event"`
+	Data  WebhookData `json:"data"`
+}
+
+func (cfg *apiConfig) endpoint_polka_webhooks(rw http.ResponseWriter, req *http.Request) {
+	WEBHOOKS := map[string]func(http.ResponseWriter, *http.Request, WebhookData){
+		"user.upgraded": cfg.polka_upgrade_user,
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	msg := WebhookBody{}
+	if err := decoder.Decode(&msg); err != nil {
+		respondWithError(rw, 500, "Couldn't decode request body")
+		return
+	}
+
+	if f, ok := WEBHOOKS[msg.Event]; ok {
+		f(rw, req, msg.Data)
+	} else {
+		rw.WriteHeader(204)
+	}
+}
+
+func (cfg *apiConfig) polka_upgrade_user(rw http.ResponseWriter, req *http.Request, data WebhookData) {
+	_, err := cfg.dbQueries.UpdateChirpyRedStatus(req.Context(), database.UpdateChirpyRedStatusParams{
+		ID:          data.UserID,
+		IsChirpyRed: true,
+	})
+	if err != nil {
+		respondWithError(rw, 404, "User ID invalid")
+	} else {
+		rw.WriteHeader(204)
+	}
 }
